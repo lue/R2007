@@ -101,6 +101,7 @@ private:
   void assemble_system ();
   void solve ();
   void output_results () const;
+  void output_results_test () const;
 
   Triangulation<3>     triangulation;
   FESystem<3>          fe;
@@ -111,6 +112,7 @@ private:
   BlockSparseMatrix<double> system_matrix;
 
   BlockVector<double>       solution;
+  BlockVector<double>       test_solution;
   BlockVector<double>       system_rhs;
 
 };
@@ -254,6 +256,10 @@ solution.block(0).reinit (n_B*3);
 solution.block(1).reinit (n_ne);
 solution.collect_sizes ();
 
+test_solution.reinit (2);
+test_solution.block(0).reinit (n_B*3);
+test_solution.block(1).reinit (n_ne);
+test_solution.collect_sizes ();
 
 // Not used at this moment
 system_rhs.reinit (2);
@@ -280,6 +286,9 @@ void R2007::set_IC ()
 void R2007::assemble_system ()
 {
 
+  const FEValuesExtractors::Vector Bfield (0);
+  const FEValuesExtractors::Scalar ne (3);
+
   QGauss<3>  quadrature_formula(2);
 
   FEValues<3> fe_values (fe, quadrature_formula,
@@ -291,6 +300,7 @@ void R2007::assemble_system ()
   FullMatrix<double>   cell_matrix (dofs_per_cell, dofs_per_cell);
   Vector<double>       cell_rhs (dofs_per_cell);
 
+
   std::cout << "DOF per cells: "
             << dofs_per_cell
             << std::endl
@@ -299,41 +309,70 @@ void R2007::assemble_system ()
             << std::endl;
 
   std::vector<types::global_dof_index> local_dof_indices (dofs_per_cell);
+  std::vector<Vector<double> > local_solution_values (n_q_points,
+                                                      Vector<double> (3+1));
+
+  std::vector<Tensor<1,3> > cell_test_solution (dofs_per_cell);
+
+  std::vector<Tensor<1,3> > local_Bfield_values (n_q_points);
+  // std::vector<Tensor<1,3> > local_Bfield_curls (n_q_points);
+  std::vector<typename dealii::internal::CurlType<3>::type> local_Bfield_curls (n_q_points);
+  std::vector<Tensor<2,3> > local_Bfield_gradients (n_q_points);
+  std::vector<double> local_ne_values (n_q_points);
+
 
   for (const auto &cell: dof_handler.active_cell_iterators())
     {
-  //
+      // Reinit local
       fe_values.reinit (cell);
+      cell->get_dof_indices (local_dof_indices);
+      // Extract all local values
+      fe_values.get_function_values (solution,
+                                     local_solution_values);
+      fe_values[Bfield].get_function_values (solution,
+                                     local_Bfield_values);
+      fe_values[Bfield].get_function_gradients (solution,
+                                     local_Bfield_gradients);
+      fe_values[Bfield].get_function_curls (solution,
+                                     local_Bfield_curls);
+      fe_values[ne].get_function_values (solution,
+                                     local_ne_values);
 
-  //
+
       cell_matrix = 0;
       cell_rhs = 0;
+      cell_test_solution = local_Bfield_curls;
+
+      // for (unsigned int q_index=0; q_index<n_q_points; ++q_index)
+      //   {
+          // for (unsigned int i=0; i<dofs_per_cell; ++i)
+          //   for (unsigned int j=0; j<dofs_per_cell; ++j)
+          //   // solution(local_dof_indices[i])  * fe_values[A_re].curl(i, q_point)
+          //     cell_matrix(i,j) += (fe_values.JxW (q_index));
+          //   // for (unsigned int i=0; i<dofs_per_cell; ++i)
+                              // cell_test_solution(i,0) += (fe_values.shape_value (i, q_index) *
+                              //                 local_Bfield_curls(i,0) *
+                              //                 fe_values.JxW (q_index));
+        // }
+
+
+      // for (unsigned int i=0; i<dofs_per_cell; ++i)
+      //   for (unsigned int j=0; j<dofs_per_cell; ++j)
+      //     system_matrix.add (local_dof_indices[i],
+      //                        local_dof_indices[j],
+      //                        cell_matrix(i,j));
+
       for (unsigned int q_index=0; q_index<n_q_points; ++q_index)
-        {
-          for (unsigned int i=0; i<dofs_per_cell; ++i)
-            for (unsigned int j=0; j<dofs_per_cell; ++j)
-              cell_matrix(i,j) += (fe_values.shape_grad (i, q_index) *
-                                   fe_values.shape_grad (j, q_index) *
-                                   fe_values.JxW (q_index));
-            // for (unsigned int i=0; i<dofs_per_cell; ++i)
-          //   cell_rhs(i) += (fe_values.shape_value (i, q_index) *
-          //                   1 *
-          //                   fe_values.JxW (q_index));
-        }
-
-      cell->get_dof_indices (local_dof_indices);
-
-      for (unsigned int i=0; i<dofs_per_cell; ++i)
-        for (unsigned int j=0; j<dofs_per_cell; ++j)
-          system_matrix.add (local_dof_indices[i],
-                             local_dof_indices[j],
-                             cell_matrix(i,j));
+        for (unsigned int i=0; i<3; ++i)
+          test_solution(local_dof_indices[q_index*3+i]) = cell_test_solution[q_index][i];
 
     }
   //
-  //     for (unsigned int i=0; i<dofs_per_cell; ++i)
-  //       system_rhs(local_dof_indices[i]) += cell_rhs(i);
-  //   }
+
+    std::cout << "Test solution: ";
+    for (unsigned int i=0; i<100; ++i)
+      std::cout << test_solution[i] << " ";
+
   //
   //
   //
@@ -383,6 +422,25 @@ void R2007::output_results () const
 
 }
 
+
+void R2007::output_results_test () const
+{
+// Taken from step-20
+  std::vector<std::string> solution_names(3, "u");
+  solution_names.push_back ("p");
+  std::vector<DataComponentInterpretation::DataComponentInterpretation>
+  interpretation (3,
+                  DataComponentInterpretation::component_is_part_of_vector);
+  interpretation.push_back (DataComponentInterpretation::component_is_scalar);
+  DataOut<3> data_out;
+  data_out.add_data_vector (dof_handler, test_solution, solution_names, interpretation);
+  data_out.build_patches (1+1);
+  std::ofstream output ("solution_test.vtk");
+  data_out.write_vtk (output);
+
+}
+
+
 void R2007::run ()
 {
   make_grid ();
@@ -390,7 +448,7 @@ void R2007::run ()
   set_IC ();
   assemble_system ();
 //  solve ();
-  output_results ();
+  output_results_test ();
 }
 
 int main ()
