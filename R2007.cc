@@ -113,6 +113,8 @@ private:
 
   BlockVector<double>       solution;
   BlockVector<double>       test_solution;
+  BlockVector<double>       temp_field;
+
   BlockVector<double>       system_rhs;
 
 };
@@ -150,7 +152,7 @@ IC_R2007<dim>::vector_value (const Point<dim> &p,
   const double n0 = 1.0*1e36; // Central electron density in cm^-3
   const double r0 = 1.0*1e6;  // Star radius 1e6 cm = 10 km
   const double B0 = 1e14;     // Magnitude of the torroidal field in G
-  const double B1 = 1e9;     // Magnitude of the poloidal field in G (B0>>B1)
+  const double B1 = 1e6;     // Magnitude of the poloidal field in G (B0>>B1)
                               // since B1 is a pertrubation
 
   //  Help variables
@@ -185,7 +187,7 @@ IC_R2007<dim>::vector_value (const Point<dim> &p,
   if (Chi<0) Chi=-Chi;
 
   // Toroidal field magnitude
-  B = B0*r0*(Chi0*Chi0/Chi/Chi);
+  B = B0*(Chi0*Chi0/Chi/Chi);
 
   // return values in order 3 components for B and one for n_e
   values(0) = B1;
@@ -261,6 +263,11 @@ test_solution.block(0).reinit (n_B*3);
 test_solution.block(1).reinit (n_ne);
 test_solution.collect_sizes ();
 
+temp_field.reinit (2);
+temp_field.block(0).reinit (n_B*3);
+temp_field.block(1).reinit (n_ne);
+temp_field.collect_sizes ();
+
 // Not used at this moment
 system_rhs.reinit (2);
 system_rhs.block(0).reinit (n_B*3);
@@ -320,6 +327,9 @@ void R2007::assemble_system ()
   std::vector<Tensor<2,3> > local_Bfield_gradients (n_q_points);
   std::vector<double> local_ne_values (n_q_points);
 
+  Tensor<1,3> temp1, temp2, temp3;
+
+  temp_field = 0;
 
   for (const auto &cell: dof_handler.active_cell_iterators())
     {
@@ -342,7 +352,7 @@ void R2007::assemble_system ()
       cell_matrix = 0;
       cell_rhs = 0;
       cell_test_solution = local_Bfield_curls;
-
+/*
       // for (unsigned int q_index=0; q_index<n_q_points; ++q_index)
       //   {
           // for (unsigned int i=0; i<dofs_per_cell; ++i)
@@ -361,17 +371,45 @@ void R2007::assemble_system ()
       //     system_matrix.add (local_dof_indices[i],
       //                        local_dof_indices[j],
       //                        cell_matrix(i,j));
+*/
 
+
+      // Get v = ∇ x B / n_e
       for (unsigned int q_index=0; q_index<n_q_points; ++q_index)
-        for (unsigned int i=0; i<3; ++i)
-          test_solution(local_dof_indices[q_index*3+i]) = cell_test_solution[q_index][i];
+        {
+          for (unsigned int i=0; i<3; ++i)
+            temp_field(local_dof_indices[q_index*3+i]) = local_Bfield_curls[q_index][i] / local_ne_values[q_index];;
+          temp_field(local_dof_indices[q_index*3+3]) = local_ne_values[q_index];
+        }
+
+      // Get v x B
+      for (unsigned int q_index=0; q_index<n_q_points; ++q_index)
+        {
+          for (unsigned int i=0; i<3; ++i)
+            {
+              temp1[i] = temp_field(local_dof_indices[q_index*3+i]);
+              temp2[i] = local_Bfield_values[q_index][i];
+            }
+          temp3 = cross_product_3d(temp1, temp2);
+          for (unsigned int i=0; i<3; ++i)
+            temp_field(local_dof_indices[q_index*3+i]) = temp3[i];
+        }
+
+      // ∇ x ( v x B )
+
+          std::cout << "Test solution: ";
+          std::cout << local_Bfield_values[0][0] << " " << local_Bfield_values[0][1] << " " << local_Bfield_values[0][2] << std::endl;
+          std::cout << temp1[0] << " " << temp1[1] << " " << temp1[2] << std::endl;
+          std::cout << temp2[0] << " " << temp2[1] << " " << temp2[2] << std::endl;
+          std::cout << temp3[0] << " " << temp3[1] << " " << temp3[2] << std::endl;
+          std::cout << std::endl;
 
     }
+
+    test_solution.reinit(temp_field);
+
   //
 
-    std::cout << "Test solution: ";
-    for (unsigned int i=0; i<100; ++i)
-      std::cout << test_solution[i] << " ";
 
   //
   //
@@ -448,6 +486,7 @@ void R2007::run ()
   set_IC ();
   assemble_system ();
 //  solve ();
+  output_results ();
   output_results_test ();
 }
 
