@@ -180,8 +180,8 @@ IC_R2007<dim>::vector_value (const Point<dim> &p,
   r = std::sqrt(t0*t0+t1*t1+t2*t2);
   n = n0 * (1.0 - r*r/r0/r0);
 
-  Chi = c/4.0/numbers::PI/n/e/(r_cyl*r_cyl+1e3*1e3);
-  Chi0 = c/4.0/numbers::PI/n0/e/(r0*r0+1e3*1e3);
+  Chi = c/4.0/numbers::PI/n/e/(r_cyl*r_cyl+1e4*1e4);
+  Chi0 = c/4.0/numbers::PI/n0/e/(r0*r0+1e4*1e4);
 
   // Chi should always be positive by construction. This check is probably unnecesasry.
   if (Chi<0) Chi=-Chi;
@@ -209,11 +209,11 @@ void R2007::make_grid ()
 {
   Point<3> center (0,0,0);
   GridGenerator::hyper_shell (triangulation,
-                              center, 0.01e6, 0.99e6, 0, true);
+                              center, 0.1e6, 0.999e6, 0, true);
   static const SphericalManifold<3> manifold_description(center);
   triangulation.set_all_manifold_ids(0);
   triangulation.set_manifold (0, manifold_description);
-  triangulation.refine_global (3);
+  triangulation.refine_global (4);
 }
 
 void R2007::setup_system ()
@@ -352,27 +352,6 @@ void R2007::assemble_system ()
       cell_matrix = 0;
       cell_rhs = 0;
       cell_test_solution = local_Bfield_curls;
-/*
-      // for (unsigned int q_index=0; q_index<n_q_points; ++q_index)
-      //   {
-          // for (unsigned int i=0; i<dofs_per_cell; ++i)
-          //   for (unsigned int j=0; j<dofs_per_cell; ++j)
-          //   // solution(local_dof_indices[i])  * fe_values[A_re].curl(i, q_point)
-          //     cell_matrix(i,j) += (fe_values.JxW (q_index));
-          //   // for (unsigned int i=0; i<dofs_per_cell; ++i)
-                              // cell_test_solution(i,0) += (fe_values.shape_value (i, q_index) *
-                              //                 local_Bfield_curls(i,0) *
-                              //                 fe_values.JxW (q_index));
-        // }
-
-
-      // for (unsigned int i=0; i<dofs_per_cell; ++i)
-      //   for (unsigned int j=0; j<dofs_per_cell; ++j)
-      //     system_matrix.add (local_dof_indices[i],
-      //                        local_dof_indices[j],
-      //                        cell_matrix(i,j));
-*/
-
 
       // Get v = ∇ x B / n_e
       for (unsigned int q_index=0; q_index<n_q_points; ++q_index)
@@ -395,20 +374,64 @@ void R2007::assemble_system ()
             temp_field(local_dof_indices[q_index*3+i]) = temp3[i];
         }
 
-      // ∇ x ( v x B )
-
-          std::cout << "Test solution: ";
-          std::cout << local_Bfield_values[0][0] << " " << local_Bfield_values[0][1] << " " << local_Bfield_values[0][2] << std::endl;
-          std::cout << temp1[0] << " " << temp1[1] << " " << temp1[2] << std::endl;
-          std::cout << temp2[0] << " " << temp2[1] << " " << temp2[2] << std::endl;
-          std::cout << temp3[0] << " " << temp3[1] << " " << temp3[2] << std::endl;
-          std::cout << std::endl;
+      // Debug output
+          // std::cout << "Test solution: ";
+          // std::cout << local_Bfield_values[0][0] << " " << local_Bfield_values[0][1] << " " << local_Bfield_values[0][2] << std::endl;
+          // std::cout << temp1[0] << " " << temp1[1] << " " << temp1[2] << std::endl;
+          // std::cout << temp2[0] << " " << temp2[1] << " " << temp2[2] << std::endl;
+          // std::cout << temp3[0] << " " << temp3[1] << " " << temp3[2] << std::endl;
+          // std::cout << std::endl;
 
     }
 
-    test_solution.reinit(temp_field);
+    test_solution = (temp_field);
+    temp_field = 0;
+
+    // Now we need another loop to evaluate curl again
+    for (const auto &cell: dof_handler.active_cell_iterators())
+      {
+        // Reinit local
+        fe_values.reinit (cell);
+        cell->get_dof_indices (local_dof_indices);
+        // Extract all local values
+        fe_values[Bfield].get_function_curls (test_solution,
+                                       local_Bfield_curls);
+
+
+        // cell_test_solution = local_Bfield_curls;
+
+        // Get ∇ x (v x B)
+        for (unsigned int q_index=0; q_index<n_q_points; ++q_index)
+          {
+            for (unsigned int i=0; i<3; ++i)
+              temp_field(local_dof_indices[q_index*3+i]) = local_Bfield_curls[q_index][i];
+          }
+      }
+
+      test_solution = (temp_field);
 
   //
+
+  /*
+        // for (unsigned int q_index=0; q_index<n_q_points; ++q_index)
+        //   {
+            // for (unsigned int i=0; i<dofs_per_cell; ++i)
+            //   for (unsigned int j=0; j<dofs_per_cell; ++j)
+            //   // solution(local_dof_indices[i])  * fe_values[A_re].curl(i, q_point)
+            //     cell_matrix(i,j) += (fe_values.JxW (q_index));
+            //   // for (unsigned int i=0; i<dofs_per_cell; ++i)
+                                // cell_test_solution(i,0) += (fe_values.shape_value (i, q_index) *
+                                //                 local_Bfield_curls(i,0) *
+                                //                 fe_values.JxW (q_index));
+          // }
+
+
+        // for (unsigned int i=0; i<dofs_per_cell; ++i)
+        //   for (unsigned int j=0; j<dofs_per_cell; ++j)
+        //     system_matrix.add (local_dof_indices[i],
+        //                        local_dof_indices[j],
+        //                        cell_matrix(i,j));
+  */
 
 
   //
