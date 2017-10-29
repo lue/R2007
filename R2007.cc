@@ -63,6 +63,11 @@
 #include <fstream>
 #include <iostream>
 
+
+////////////////////////////////////////
+// Curl integrator
+#include <deal.II/integrators/maxwell.h>
+
 using namespace dealii;
 
 /*
@@ -93,7 +98,6 @@ private:
   void make_grid ();
   void setup_system ();
   void set_IC ();
-  void assemble_vector_field ();
   void assemble_system ();
   void solve ();
   void output_results () const;
@@ -101,11 +105,10 @@ private:
   Triangulation<3>     triangulation;
   FESystem<3>          fe;
   DoFHandler<3>        dof_handler;
-  SparsityPattern      sparsity_pattern;
-
 
 // Default variables that we do not use here
-  SparseMatrix<double> system_matrix;
+  BlockSparsityPattern      sparsity_pattern;
+  BlockSparseMatrix<double> system_matrix;
 
   BlockVector<double>       solution;
   BlockVector<double>       system_rhs;
@@ -216,10 +219,7 @@ void R2007::setup_system ()
   // Sort dof in order to have a block matrix
   DoFRenumbering::component_wise (dof_handler);
 
-  DynamicSparsityPattern dsp(dof_handler.n_dofs());
-  DoFTools::make_sparsity_pattern (dof_handler, dsp);
-  sparsity_pattern.copy_from(dsp);
-
+  // Number of DOFs per component
   std::vector<types::global_dof_index> dofs_per_component (4);
   DoFTools::count_dofs_per_component (dof_handler, dofs_per_component);
   const unsigned int n_B = dofs_per_component[0],
@@ -236,13 +236,26 @@ void R2007::setup_system ()
               << " (" << n_ne << '+' << n_B << ')'
               << std::endl;
 
-//  system_matrix.reinit (sparsity_pattern);
+
+// Initialize all matrices and vectors
+
+BlockDynamicSparsityPattern dsp(2, 2);
+dsp.block(0, 0).reinit (n_B*3, n_B*3);
+dsp.block(1, 0).reinit (n_ne, n_B*3);
+dsp.block(0, 1).reinit (n_B*3, n_ne);
+dsp.block(1, 1).reinit (n_ne, n_ne);
+dsp.collect_sizes ();
+DoFTools::make_sparsity_pattern (dof_handler, dsp);
+sparsity_pattern.copy_from(dsp);
+system_matrix.reinit (sparsity_pattern);
 
 solution.reinit (2);
 solution.block(0).reinit (n_B*3);
 solution.block(1).reinit (n_ne);
 solution.collect_sizes ();
 
+
+// Not used at this moment
 system_rhs.reinit (2);
 system_rhs.block(0).reinit (n_B*3);
 system_rhs.block(1).reinit (n_ne);
@@ -256,80 +269,67 @@ void R2007::set_IC ()
   ConstraintMatrix constraints;
   constraints.close();
 
+  // Projecting ICs onto the solution vector
   VectorTools::project (dof_handler,
                         constraints,
                         QGauss<3>(3),
                         IC_R2007<3>(),
                         solution);
-
-  // VectorTools::project (dof_handler,
-  //                       constraints,
-  //                       QGauss<3>(3),
-  //                       InitialValuesChiE<3>(),
-  //                       ChiE);
-}
-
-void R2007::assemble_vector_field()
-{
-
-
-/*FEEvaluation<3, 1> fe_eval (fe);
-
-for (const auto &cell: dof_handler.active_cell_iterators())
-  {
-    fe_eval.reinit(cell);
-
-  }
-*/
-
 }
 
 void R2007::assemble_system ()
 {
 
-  // QGauss<3>  quadrature_formula(2);
+  QGauss<3>  quadrature_formula(2);
+
+  FEValues<3> fe_values (fe, quadrature_formula,
+                         update_values | update_gradients | update_JxW_values);
+
+  const unsigned int   dofs_per_cell = fe.dofs_per_cell;
+  const unsigned int   n_q_points    = quadrature_formula.size();
+
+  FullMatrix<double>   cell_matrix (dofs_per_cell, dofs_per_cell);
+  Vector<double>       cell_rhs (dofs_per_cell);
+
+  std::cout << "DOF per cells: "
+            << dofs_per_cell
+            << std::endl
+            << "Q points: "
+            << n_q_points
+            << std::endl;
+
+  std::vector<types::global_dof_index> local_dof_indices (dofs_per_cell);
+
+  for (const auto &cell: dof_handler.active_cell_iterators())
+    {
   //
-  // FEValues<3> fe_values (fe, quadrature_formula,
-  //                        update_values | update_gradients | update_JxW_values);
+      fe_values.reinit (cell);
+
   //
-  // const unsigned int   dofs_per_cell = fe.dofs_per_cell;
-  // const unsigned int   n_q_points    = quadrature_formula.size();
-  //
-  // FullMatrix<double>   cell_matrix (dofs_per_cell, dofs_per_cell);
-  // Vector<double>       cell_rhs (dofs_per_cell);
-  //
-  // std::vector<types::global_dof_index> local_dof_indices (dofs_per_cell);
-  //
-  // for (const auto &cell: dof_handler.active_cell_iterators())
-  //   {
-  //
-  //     fe_values.reinit (cell);
-  //
-  //
-  //     cell_matrix = 0;
-  //     cell_rhs = 0;
-  //
-  //     for (unsigned int q_index=0; q_index<n_q_points; ++q_index)
-  //       {
-  //         for (unsigned int i=0; i<dofs_per_cell; ++i)
-  //           for (unsigned int j=0; j<dofs_per_cell; ++j)
-  //             cell_matrix(i,j) += (fe_values.shape_grad (i, q_index) *
-  //                                  fe_values.shape_grad (j, q_index) *
-  //                                  fe_values.JxW (q_index));
-  //
-  //         for (unsigned int i=0; i<dofs_per_cell; ++i)
-  //           cell_rhs(i) += (fe_values.shape_value (i, q_index) *
-  //                           1 *
-  //                           fe_values.JxW (q_index));
-  //       }
-  //
-  //     cell->get_dof_indices (local_dof_indices);
-  //
-  //     for (unsigned int i=0; i<dofs_per_cell; ++i)
-  //       for (unsigned int j=0; j<dofs_per_cell; ++j)
-  //         system_matrix.add (local_dof_indices[i],
-  //                            local_dof_indices[j],
-  //                            cell_matrix(i,j));
+      cell_matrix = 0;
+      cell_rhs = 0;
+      for (unsigned int q_index=0; q_index<n_q_points; ++q_index)
+        {
+          for (unsigned int i=0; i<dofs_per_cell; ++i)
+            for (unsigned int j=0; j<dofs_per_cell; ++j)
+              cell_matrix(i,j) += (fe_values.curl (i, q_index) *
+                                   fe_values.shape_grad (j, q_index) *
+                                   fe_values.JxW (q_index));
+            // for (unsigned int i=0; i<dofs_per_cell; ++i)
+          //   cell_rhs(i) += (fe_values.shape_value (i, q_index) *
+          //                   1 *
+          //                   fe_values.JxW (q_index));
+        }
+
+      cell->get_dof_indices (local_dof_indices);
+
+      for (unsigned int i=0; i<dofs_per_cell; ++i)
+        for (unsigned int j=0; j<dofs_per_cell; ++j)
+          system_matrix.add (local_dof_indices[i],
+                             local_dof_indices[j],
+                             cell_matrix(i,j));
+
+    }
   //
   //     for (unsigned int i=0; i<dofs_per_cell; ++i)
   //       system_rhs(local_dof_indices[i]) += cell_rhs(i);
@@ -368,18 +368,6 @@ void R2007::solve ()
 
 void R2007::output_results () const
 {
-  // DataOut<3> data_out;
-  //
-  // data_out.attach_dof_handler (dof_handler);
-  // data_out.add_data_vector (ChiE, "ChiE");
-  // data_out.add_data_vector (solution, "solution");
-  // data_out.add_data_vector (ne, "ne");
-  //
-  // data_out.build_patches ();
-  //
-  // std::ofstream output ("solution.vtk");
-  // data_out.write_vtk (output);
-
 // Taken from step-20
   std::vector<std::string> solution_names(3, "u");
   solution_names.push_back ("p");
@@ -400,7 +388,7 @@ void R2007::run ()
   make_grid ();
   setup_system ();
   set_IC ();
-//  assemble_system ();
+  assemble_system ();
 //  solve ();
   output_results ();
 }
