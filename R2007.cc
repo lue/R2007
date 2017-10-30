@@ -99,9 +99,9 @@ private:
   void make_grid ();
   void setup_system ();
   void set_IC ();
-  void assemble_system ();
-  void solve ();
-  void output_results () const;
+  void assemble_system (bool test_output);
+  void propagate ();
+  void output_results (const unsigned int timestep_number) const;
   void output_results_test (std::string s) const;
 
   Triangulation<3>     triangulation;
@@ -154,7 +154,7 @@ IC_R2007<dim>::vector_value (const Point<dim> &p,
   const double n0 = 1.0*1e36; // Central electron density in cm^-3
   const double r0 = 1.0*1e6;  // Star radius 1e6 cm = 10 km
   const double B0 = 1e14;     // Magnitude of the torroidal field in G
-  const double B1 = 1e6;     // Magnitude of the poloidal field in G (B0>>B1)
+  const double B1 = 1e2;     // Magnitude of the poloidal field in G (B0>>B1)
                               // since B1 is a pertrubation
 
   //  Help variables
@@ -292,7 +292,7 @@ void R2007::set_IC ()
                         solution);
 }
 
-void R2007::assemble_system ()
+void R2007::assemble_system (bool test_output)
 {
 
   const FEValuesExtractors::Vector Bfield (0);
@@ -390,7 +390,10 @@ void R2007::assemble_system ()
     // Output the results from step 1
     test_solution = (temp_field);
     std::string fname ("curlB_over_ne.vtk");
-    output_results_test (fname);
+    if (test_output)
+    {
+      output_results_test (fname);
+    }
     temp_field = 0;
 
 
@@ -445,8 +448,11 @@ void R2007::assemble_system ()
       }
 
     test_solution = (temp_field);
-    fname = "v_cross_B.vtk";
-    output_results_test (fname);
+    if (test_output)
+    {
+      fname = "v_cross_B.vtk";
+      output_results_test (fname);
+    }
     temp_field = 0;
 
     // Step 3
@@ -494,66 +500,17 @@ void R2007::assemble_system ()
       }
 
     test_solution = (temp_field);
-    fname = "curl_v_cross_B.vtk";
-    output_results_test (fname);
-
-  //
-
-  /*
-        // for (unsigned int q_index=0; q_index<n_q_points; ++q_index)
-        //   {
-            // for (unsigned int i=0; i<dofs_per_cell; ++i)
-            //   for (unsigned int j=0; j<dofs_per_cell; ++j)
-            //   // solution(local_dof_indices[i])  * fe_values[A_re].curl(i, q_point)
-            //     cell_matrix(i,j) += (fe_values.JxW (q_index));
-            //   // for (unsigned int i=0; i<dofs_per_cell; ++i)
-                                // cell_test_solution(i,0) += (fe_values.shape_value (i, q_index) *
-                                //                 local_Bfield_curls(i,0) *
-                                //                 fe_values.JxW (q_index));
-          // }
-
-
-        // for (unsigned int i=0; i<dofs_per_cell; ++i)
-        //   for (unsigned int j=0; j<dofs_per_cell; ++j)
-        //     system_matrix.add (local_dof_indices[i],
-        //                        local_dof_indices[j],
-        //                        cell_matrix(i,j));
-  */
-
-
-  //
-  //
-  //
-  // std::map<types::global_dof_index,double> boundary_values;
-  // VectorTools::interpolate_boundary_values (dof_handler,
-  //                                           0,
-  //                                           Functions::ZeroFunction<3>(),
-  //                                           boundary_values);
-  //
-  // MatrixTools::apply_boundary_values (boundary_values,
-  //                                     system_matrix,
-  //                                     solution,
-  //                                     system_rhs);
+    if (test_output)
+    {
+      fname = "curl_v_cross_B.vtk";
+      output_results_test (fname);
+    }
 }
 
 
 
-void R2007::solve ()
-{
-  //
-  // SolverControl           solver_control (1000, 1e-12);
-  //
-  // SolverCG<>              solver (solver_control);
-  //
-  //
-  // solver.solve (system_matrix, solution, system_rhs,
-  //               PreconditionIdentity());
 
-}
-
-
-
-void R2007::output_results () const
+void R2007::output_results (const unsigned int timestep_number) const
 {
 // Taken from step-20
   std::vector<std::string> solution_names(3, "u");
@@ -565,7 +522,12 @@ void R2007::output_results () const
   DataOut<3> data_out;
   data_out.add_data_vector (dof_handler, solution, solution_names, interpretation);
   data_out.build_patches (1+1);
-  std::ofstream output ("solution.vtk");
+
+  const std::string filename =  "solution-" +
+                                Utilities::int_to_string (timestep_number, 3) +
+                                ".vtk";
+
+  std::ofstream output (filename.c_str());
   data_out.write_vtk (output);
 
 }
@@ -589,14 +551,45 @@ void R2007::output_results_test (std::string s) const
 }
 
 
+
+void R2007::propagate ()
+{
+
+}
+
+
 void R2007::run ()
 {
+
+  const FEValuesExtractors::Vector Bfield (0);
+  const FEValuesExtractors::Scalar ne (3);
+
   make_grid ();
   setup_system ();
   set_IC ();
-  assemble_system ();
-//  solve ();
-  output_results ();
+
+  output_results (0);
+
+  bool test_output = false;
+
+  assemble_system (true);
+
+  double dt;
+  dt=1e8;
+  for (unsigned int j=1; j<10; j=j+1)
+  {  std::cout << "Step: "
+            << j
+            << std::endl
+            << dt*test_solution.block(0).mean_value()
+            << std::endl
+            << solution.block(0).mean_value()
+            << std::endl;
+    solution.add(dt, test_solution);
+    output_results (j);
+    assemble_system (test_output);
+  }
+
+//  propagate ();
   // output_results_test ();
 }
 
