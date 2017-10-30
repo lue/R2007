@@ -115,6 +115,7 @@ private:
   BlockVector<double>       solution;
   BlockVector<double>       test_solution;
   BlockVector<double>       temp_field;
+  BlockVector<double>       temp_count;
 
   BlockVector<double>       system_rhs;
 
@@ -297,10 +298,10 @@ void R2007::assemble_system ()
   const FEValuesExtractors::Vector Bfield (0);
   const FEValuesExtractors::Scalar ne (3);
 
-  QGauss<3>  quadrature_formula(2);
+  QGauss<3>  quadrature_formula(3);
 
   FEValues<3> fe_values (fe, quadrature_formula,
-                         update_values | update_gradients | update_JxW_values);
+                         update_values | update_gradients | update_quadrature_points | update_JxW_values);
 
   const unsigned int   dofs_per_cell = fe.dofs_per_cell;
   const unsigned int   n_q_points    = quadrature_formula.size();
@@ -323,6 +324,7 @@ void R2007::assemble_system ()
   std::vector<Tensor<1,3> > cell_test_solution (dofs_per_cell);
 
   std::vector<Tensor<1,3> > local_Bfield_values (n_q_points);
+  std::vector<Tensor<1,3> > local_vector_values (n_q_points);
   // std::vector<Tensor<1,3> > local_Bfield_curls (n_q_points);
   std::vector<typename dealii::internal::CurlType<3>::type> local_Bfield_curls (n_q_points);
   std::vector<Tensor<2,3> > local_Bfield_gradients (n_q_points);
@@ -331,17 +333,21 @@ void R2007::assemble_system ()
   Tensor<1,3> temp1, temp2, temp3;
 
   temp_field = 0;
-
+  temp_count.reinit(temp_field);
+  temp_count = 0;
   double scale = 1e25;
 
+
+  // Step 1
+  // Get v = ∇ x B / n_e
   for (const auto &cell: dof_handler.active_cell_iterators())
     {
       // Reinit local
       fe_values.reinit (cell);
       cell->get_dof_indices (local_dof_indices);
       // Extract all local values
-      // fe_values.get_function_values (solution,
-      //                                local_solution_values);
+      fe_values.get_function_values (solution,
+                                     local_solution_values);
       fe_values[Bfield].get_function_values (solution,
                                      local_Bfield_values);
       // fe_values[Bfield].get_function_gradients (solution,
@@ -351,38 +357,46 @@ void R2007::assemble_system ()
       fe_values[ne].get_function_values (solution,
                                      local_ne_values);
 
-
       cell_matrix = 0;
       cell_rhs = 0;
       cell_test_solution = local_Bfield_curls;
 
-      // Get v = ∇ x B / n_e
+      double temp = 0;
       for (unsigned int q_index=0; q_index<n_q_points; ++q_index)
         {
+          for (unsigned int j=3; j<dofs_per_cell; j=j+4)
+          {
+            temp_field(local_dof_indices[j]) += local_solution_values[q_index][3] * fe_values.shape_value(j, q_index);
+            temp_count(local_dof_indices[j]) += 1.;
+          }
           for (unsigned int i=0; i<3; ++i)
             {
-              temp_field(local_dof_indices[q_index*4+i]) = scale * local_Bfield_curls[q_index][i] / local_ne_values[q_index];;
+              for (unsigned int j=i; j<dofs_per_cell; j=j+4)
+              {
+                temp_field(local_dof_indices[j]) += scale * local_Bfield_curls[q_index][i] / local_ne_values[q_index]
+                                                                    * fe_values.shape_value(j, q_index);
+                temp_count(local_dof_indices[j]) += 1.;
+              }
             }
-          temp_field(local_dof_indices[q_index*4+3]) = local_ne_values[q_index];
-          // std::cout << solution(local_dof_indices[q_index*4+3]) / local_ne_values[q_index] << std::endl;
+
         }
-
-      // for (unsigned int q_index=0; q_index<n_q_points; ++q_index)
-      //   {
-      //       std::cout << "Test solution: ";
-      //       std::cout << local_Bfield_values[q_index][0] << " " << local_Bfield_values[q_index][1] << " " << local_Bfield_values[q_index][2] << std::endl;
-      //       std::cout << solution(local_dof_indices[q_index*3+0]) << " " << solution(local_dof_indices[q_index*3+1]) << " " << solution(local_dof_indices[q_index*3+2]) << std::endl;
-      //       // std::cout << temp2[0] << " " << temp2[1] << " " << temp2[2] << std::endl;
-      //       // std::cout << temp3[0] << " " << temp3[1] << " " << temp3[2] << std::endl;
-      //       std::cout << std::endl;
-      //   }
-
     }
 
+    for (unsigned int i=0; i<temp_field.size(); ++i)
+    {
+      temp_field(i) /= temp_count(i) / (dofs_per_cell / 4.);
+      // TODO: This fix is not appropriate. A better solution should exist
+    }
+
+    // Output the results from step 1
     test_solution = (temp_field);
     std::string fname ("curlB_over_ne.vtk");
     output_results_test (fname);
     temp_field = 0;
+
+
+    // Step 2
+    // Get v = (∇ x B / n_e) x B
 
     for (const auto &cell: dof_handler.active_cell_iterators())
       {
@@ -392,81 +406,111 @@ void R2007::assemble_system ()
         // Extract all local values
         fe_values[Bfield].get_function_values (solution,
                                        local_Bfield_values);
+        fe_values[Bfield].get_function_values (test_solution,
+                                       local_vector_values);
+        fe_values[ne].get_function_values (test_solution,
+                                       local_ne_values);
 
-      // Get v x B
-      for (unsigned int q_index=0; q_index<n_q_points; ++q_index)
-        {
-          for (unsigned int i=0; i<3; ++i)
+        // Get v x B
+        for (unsigned int q_index=0; q_index<n_q_points; ++q_index)
+          {
+            for (unsigned int i=0; i<3; ++i)
+              {
+                temp1[i] = local_vector_values[q_index][i];
+                temp2[i] = local_Bfield_values[q_index][i];
+              }
+            temp3 = cross_product_3d(temp1, temp2);
+            for (unsigned int i=0; i<3; ++i)
+              {
+                for (unsigned int j=i; j<dofs_per_cell; j=j+4)
+                {
+                  temp_field(local_dof_indices[j]) += temp3[i] * fe_values.shape_value(j, q_index);
+                  temp_count(local_dof_indices[j]) += 1.;
+                }
+              }
+
+            // Copy scalar field
+            for (unsigned int j=3; j<dofs_per_cell; j=j+4)
             {
-              temp1[i] = test_solution(local_dof_indices[q_index*4+i]);
-              temp2[i] = local_Bfield_values[q_index][i];
+              temp_field(local_dof_indices[j]) += local_ne_values[q_index] * fe_values.shape_value(j, q_index);
+              temp_count(local_dof_indices[j]) += 1.;
             }
-          temp3 = cross_product_3d(temp1, temp2);
-          for (unsigned int i=0; i<3; ++i)
-            temp_field(local_dof_indices[q_index*4+i]) = temp3[i];
-        }
+          }
 
-      // Debug output
-          // std::cout << "Test solution: ";
-          // std::cout << local_Bfield_values[0][0] << " " << local_Bfield_values[0][1] << " " << local_Bfield_values[0][2] << std::endl;
-          // std::cout << temp1[0] << " " << temp1[1] << " " << temp1[2] << std::endl;
-          // std::cout << temp2[0] << " " << temp2[1] << " " << temp2[2] << std::endl;
-          // std::cout << temp3[0] << " " << temp3[1] << " " << temp3[2] << std::endl;
-          // std::cout << std::endl;
+        // for (unsigned int q_index=0; q_index<n_q_points; ++q_index)
+        //   {
+        //   for (unsigned int i=0; i<3; ++i)
+        //     {
+        //       temp1[i] = test_solution(local_dof_indices[q_index*4+i]);
+        //       temp2[i] = local_Bfield_values[q_index][i];
+        //     }
+        //   temp3 = cross_product_3d(temp1, temp2);
+        //   for (unsigned int i=0; i<3; ++i)
+        //     temp_field(local_dof_indices[q_index*4+i]) = temp3[i];
+        // }
+      }
 
-    }
+
+    for (unsigned int i=0; i<temp_field.size(); ++i)
+      {
+        temp_field(i) /= temp_count(i) / (dofs_per_cell / 4.);
+        // TODO: This fix is not appropriate. A better solution should exist
+      }
 
     test_solution = (temp_field);
     fname = "v_cross_B.vtk";
     output_results_test (fname);
     temp_field = 0;
 
-    // Now we need another loop to evaluate curl again
-    for (const auto &cell: dof_handler.active_cell_iterators())
-      {
-        // Reinit local
-        fe_values.reinit (cell);
-        cell->get_dof_indices (local_dof_indices);
-        // Extract all local values
-        // fe_values.get_function_values (solution,
-        //                                local_solution_values);
-        fe_values[Bfield].get_function_values (test_solution,
-                                       local_Bfield_values);
-        // fe_values[Bfield].get_function_gradients (solution,
-        //                                local_Bfield_gradients);
-        fe_values[Bfield].get_function_curls (test_solution,
-                                       local_Bfield_curls);
-        fe_values[ne].get_function_values (test_solution,
-                                       local_ne_values);
-
-
-        cell_matrix = 0;
-        cell_rhs = 0;
-        cell_test_solution = local_Bfield_curls;
-
-        for (unsigned int q_index=0; q_index<n_q_points; ++q_index)
-          {
-            for (unsigned int i=0; i<3; ++i)
-              {
-                temp_field(local_dof_indices[q_index*4+i]) = local_Bfield_curls[q_index][i];
-              }
-            temp_field(local_dof_indices[q_index*4+3]) = local_ne_values[q_index];
-          }
-        for (unsigned int q_index=0; q_index<n_q_points; ++q_index)
-          {
-              std::cout << "Test solution: ";
-              std::cout << local_Bfield_curls[q_index][0] << " " << local_Bfield_curls[q_index][1] << " " << local_Bfield_curls[q_index][2] << std::endl;
-              std::cout << temp_field(local_dof_indices[q_index*4+0]) << " " << temp_field(local_dof_indices[q_index*4+1]) << " " << temp_field(local_dof_indices[q_index*4+2]) << std::endl;
-              // std::cout << temp2[0] << " " << temp2[1] << " " << temp2[2] << std::endl;
-              // std::cout << temp3[0] << " " << temp3[1] << " " << temp3[2] << std::endl;
-              std::cout << std::endl;
-          }
-
-      }
-
-      test_solution = (temp_field);
-      fname = "curl_v_cross_B.vtk";
-      output_results_test (fname);
+    //
+    // // Now we need another loop to evaluate curl again
+    // for (const auto &cell: dof_handler.active_cell_iterators())
+    //   {
+    //     // Reinit local
+    //     fe_values.reinit (cell);
+    //     cell->get_dof_indices (local_dof_indices);
+    //     // Extract all local values
+    //     // fe_values.get_function_values (solution,
+    //     //                                local_solution_values);
+    //     fe_values[Bfield].get_function_values (solution,
+    //                                    local_Bfield_values);
+    //     // fe_values[Bfield].get_function_gradients (solution,
+    //     //                                local_Bfield_gradients);
+    //     fe_values[Bfield].get_function_curls (test_solution,
+    //                                    local_Bfield_curls);
+    //     fe_values[ne].get_function_values (test_solution,
+    //                                    local_ne_values);
+    //
+    //
+    //     cell_matrix = 0;
+    //     cell_rhs = 0;
+    //     cell_test_solution = local_Bfield_curls;
+    //
+    //     for (unsigned int q_index=0; q_index<n_q_points; ++q_index)
+    //       {
+    //         for (unsigned int i=0; i<3; ++i)
+    //           {
+    //             temp_field(local_dof_indices[q_index*4+i]) = local_Bfield_curls[q_index][i];
+    //           }
+    //         temp_field(local_dof_indices[q_index*4+3]) = local_ne_values[q_index];
+    //       }
+    //     // for (unsigned int q_index=0; q_index<n_q_points; ++q_index)
+    //     //   {
+    //     //       std::cout << "Test solution: ";
+    //     //       std::cout << local_Bfield_curls[q_index][0]/local_Bfield_values[q_index][0]
+    //     //        << " " << local_Bfield_curls[q_index][1]/local_Bfield_values[q_index][1]
+    //     //         << " " << local_Bfield_curls[q_index][2]/local_Bfield_values[q_index][2] << std::endl;
+    //     //       std::cout << temp_field(local_dof_indices[q_index*4+0]) << " " << temp_field(local_dof_indices[q_index*4+1]) << " " << temp_field(local_dof_indices[q_index*4+2]) << std::endl;
+    //     //       // std::cout << temp2[0] << " " << temp2[1] << " " << temp2[2] << std::endl;
+    //     //       // std::cout << temp3[0] << " " << temp3[1] << " " << temp3[2] << std::endl;
+    //     //       std::cout << std::endl;
+    //     //   }
+    //
+    //   }
+    //
+    //   test_solution = (temp_field);
+    //   fname = "curl_v_cross_B.vtk";
+    //   output_results_test (fname);
 
   //
 
