@@ -154,7 +154,7 @@ IC_R2007<dim>::vector_value (const Point<dim> &p,
   const double n0 = 1.0*1e36; // Central electron density in cm^-3
   const double r0 = 1.0*1e6;  // Star radius 1e6 cm = 10 km
   const double B0 = 1e14;     // Magnitude of the torroidal field in G
-  const double B1 = 1e2;     // Magnitude of the poloidal field in G (B0>>B1)
+  const double B1 = 1e6;     // Magnitude of the poloidal field in G (B0>>B1)
                               // since B1 is a pertrubation
 
   //  Help variables
@@ -211,11 +211,11 @@ void R2007::make_grid ()
 {
   Point<3> center (0,0,0);
   GridGenerator::hyper_shell (triangulation,
-                              center, 0.1e6, 0.999e6, 12, true);
+                              center, 0.1e6, 0.999e6, 0, true);
   static const SphericalManifold<3> manifold_description(center);
   triangulation.set_all_manifold_ids(0);
   triangulation.set_manifold (0, manifold_description);
-  triangulation.refine_global (3);
+  triangulation.refine_global (5);
 }
 
 void R2007::setup_system ()
@@ -365,7 +365,7 @@ void R2007::assemble_system (bool test_output)
         {
           for (unsigned int j=3; j<dofs_per_cell; j=j+4)
           {
-            temp_field(local_dof_indices[j]) += local_solution_values[q_index][3] * fe_values.shape_value(j, q_index);
+            temp_field(local_dof_indices[j]) += local_ne_values[q_index] * fe_values.shape_value(j, q_index);
             temp_count(local_dof_indices[j]) += 1.;
           }
           for (unsigned int i=0; i<3; ++i)
@@ -485,7 +485,8 @@ void R2007::assemble_system (bool test_output)
             // Copy scalar field
             for (unsigned int j=3; j<dofs_per_cell; j=j+4)
               {
-                temp_field(local_dof_indices[j]) += local_ne_values[q_index] * fe_values.shape_value(j, q_index);
+                // TODO: proper d n_e/dt
+                temp_field(local_dof_indices[j]) += 0;//local_ne_values[q_index] * fe_values.shape_value(j, q_index);
                 temp_count(local_dof_indices[j]) += 1.;
               }
           }
@@ -575,7 +576,7 @@ void R2007::run ()
   assemble_system (true);
 
   double dt;
-  dt=1e8;
+  dt=1e7;
   for (unsigned int j=1; j<10; j=j+1)
   {  std::cout << "Step: "
             << j
