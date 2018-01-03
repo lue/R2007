@@ -48,7 +48,7 @@ void R2007::make_grid ()
 {
   Point<3> center (0,0,0);
   GridGenerator::hyper_shell (triangulation,
-                              center, 0.1e6, 0.999e6, 96, true);
+                              center, 0.01, 0.9999, 96, true);
   static const SphericalManifold<3> manifold_description(center);
   triangulation.set_all_manifold_ids(0);
   triangulation.set_manifold (0, manifold_description);
@@ -172,7 +172,7 @@ void R2007::assemble_system (bool test_output)
   temp_field = 0;
   temp_count.reinit(temp_field);
   temp_count = 0;
-  double scale = 1e25;
+  double scale = 1.0;
 
 
   // Step 1
@@ -346,6 +346,7 @@ void R2007::assemble_system (bool test_output)
 }
 
 
+
 void R2007::assemble_system_test (bool test_output)
 {
   std::string fname;
@@ -447,7 +448,6 @@ void R2007::assemble_system_test (bool test_output)
       output_results_test (fname);
     }
 }
-
 
 
 

@@ -27,14 +27,14 @@ IC_R2007<dim>::vector_value (const Point<dim> &p,
           ExcDimensionMismatch (values.size(), dim+1));
 
   // Physical constants
-  const double c = 3e10; // cm/s
-  const double e = 1; // electron charge
+  const double c = 1.0; // 3e10; // cm/s
+  const double e = 1.0; // electron charge
 
   // Model constatns
-  const double n0 = 1.0*1e36; // Central electron density in cm^-3
-  const double r0 = 1.0*1e6;  // Star radius 1e6 cm = 10 km
-  const double B0 = 1e14;     // Magnitude of the torroidal field in G
-  const double B1 = 1e12;     // Magnitude of the poloidal field in G (B0>>B1)
+  const double n0 = 1.0; // Central electron density in cm^-3
+  const double r0 = 1.0;  // Star radius 1e6 cm = 10 km
+  const double B0 = 1.0;     // Magnitude of the torroidal field in G
+  const double B1 = 1.0;     // Magnitude of the poloidal field in G (B0>>B1)
                               // since B1 is a pertrubation
 
   //  Help variables
@@ -62,8 +62,8 @@ IC_R2007<dim>::vector_value (const Point<dim> &p,
   r = std::sqrt(t0*t0+t1*t1+t2*t2);
   n = n0 * (1.0 - r*r/r0/r0);
 
-  Chi = c/4.0/numbers::PI/n/e/(r_cyl*r_cyl+1e4*1e4);
-  Chi0 = c/4.0/numbers::PI/n0/e/(r0*r0+1e4*1e4);
+  Chi = c/4.0/numbers::PI/n/e/(r_cyl*r_cyl+1e-4*1e-4);
+  Chi0 = c/4.0/numbers::PI/n0/e/(r0*r0+1e-4*1e-4);
 
   // Chi should always be positive by construction. This check is probably unnecesasry.
   if (Chi<0) Chi=-Chi;
